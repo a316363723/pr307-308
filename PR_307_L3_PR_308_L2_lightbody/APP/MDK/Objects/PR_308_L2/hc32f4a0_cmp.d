@@ -1,0 +1,16 @@
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\driver\src\hc32f4a0_cmp.c
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\driver\inc\hc32f4a0_cmp.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\common\hc32_common.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stddef.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\common\hc32f4a0.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\bsp\Include\core_cm4.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\bsp\Include\cmsis_version.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\bsp\Include\cmsis_compiler.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\bsp\Include\cmsis_armcc.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\bsp\Include\mpu_armv7.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\common\system_hc32f4a0.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\source\ddl_config.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: ..\driver\inc\hc32f4a0_utility.h
+.\objects\pr_308_l2\hc32f4a0_cmp.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h

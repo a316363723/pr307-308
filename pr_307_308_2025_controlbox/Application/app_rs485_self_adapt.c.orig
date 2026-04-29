@@ -1,0 +1,546 @@
+#include "app_rs485_self_adapt.h"
+#include "api_rs485_proto.h"
+#include "hal_iic.h"
+#include <string.h>
+#include <stdint.h>
+#include "dev_power.h"
+#include "app_power.h"
+#include "hal_timer.h"
+#include "hc32_ddl.h"
+#include "perf_counter.h"
+
+
+#define GET_16BIT_HIGH8BIT(a)    ((a >> 8) & 0xff)
+#define GET_16BIT_LOW8BIT(a)    (a & 0xff)
+#define RS485_ANALOG_FADE_TIME      (1000)
+static uint8_t read_buff[200] = {0};
+
+# if PROJECT_TYPE==307
+static struct dac_change dac_fade = {
+	.analog_dac_init = {.r= 200,.g = 200,.b = 200,.ww = 200,.cw = 200},
+	.analog_dac_start = {0},
+	.analog_dac_current = {0},
+	.analog_dac_end = {0},
+	.run_time = 0,
+	.fade_start = 0,
+	
+};
+
+static struct adapt_change adapt_fade = {
+	.adapt_pwm_init = {.r= 5050,.g = 5600,.b = 4950,.ww1 = 5000,.cw1 = 4800,.ww2 = 5200,.cw2 = 4800},
+	.adapt_pwm_limit = {.r= 2100,.g = 2250,.b = 2160,.ww1 = 2100,.cw1 = 2060,.ww2 = 2100,.cw2 = 2050},
+	.adapt_pwm_start ={.r= 5900,.g = 5900,.b = 5900,.ww1 = 5900,.cw1 = 5900,.ww2 = 5900,.cw2 = 5900},
+	.adapt_pwm_current = {.r= 5900,.g = 5900,.b = 5900,.ww1 = 5900,.cw1 = 5900,.ww2 = 5900,.cw2 = 5900},
+	.adapt_pwm_end = {.r= 5900,.g = 5900,.b = 5900,.ww1 = 5900,.cw1 = 5900,.ww2 = 5900,.cw2 = 5900},
+};
+
+#elif PROJECT_TYPE==308
+struct dac_change dac_fade = {
+	.analog_dac_init = {.r= 200,.g = 200,.b = 200,.ww = 200,.cw = 200},
+	.analog_dac_start = {0},
+	.analog_dac_current = {0},
+	.analog_dac_end = {0},
+	.run_time = 0,
+	.fade_start = 0,
+	
+};
+
+struct adapt_change adapt_fade = {
+	.adapt_pwm_init = {.r= 4900,.g = 3950,.b = 3800,.ww1 = 3850,.cw1 = 3800,.ww2 = 3900,.cw2 = 3800,},
+	.adapt_pwm_limit = {.r= 1250,.g = 1660,.b = 1800,.ww1 = 1800,.cw1 = 1800,.ww2 = 1800,.cw2 = 1900,},
+	.adapt_pwm_start ={.r= 5900,.g = 5900,.b = 5900,.ww1 = 5900,.cw1 = 5900,.ww2 = 5900,.cw2 = 5900},
+	.adapt_pwm_current = {.r= 5900,.g = 5900,.b = 5900,.ww1 = 5900,.cw1 = 5900,.ww2 = 5900,.cw2 = 5900},
+	.adapt_pwm_end = {.r= 5900,.g = 5900,.b = 5900,.ww1 = 5900,.cw1 = 5900,.ww2 = 5900,.cw2 = 5900},
+};
+#endif
+
+void analog_dim_fade_restart(void)
+{
+	dac_fade.run_time = 0;
+    dac_fade.fade_start = 1;
+}
+
+void adapt_fade_restart(void)
+{
+    adapt_fade.run_time = 0;
+    adapt_fade.fade_start = 1;
+}
+
+void analog_dim_fade_stop(void)
+{
+    dac_fade.fade_start = 0;
+}
+
+static dmx_loss_state s_dmx_loss_state;
+
+void analog_dim_output( rs485_dac_dim_t * dac_body )
+{
+ 
+    uint8_t iic_buff[2] = {0}; 
+#if PROJECT_TYPE==307
+
+    iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->cw);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->cw);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW1_ADDRESS,iic_buff,2);   
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW2_ADDRESS,iic_buff,2);
+
+    iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->ww);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->ww);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW1_ADDRESS,iic_buff,2);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW2_ADDRESS,iic_buff,2);    
+	
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->b); 
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->b);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_G_ADDRESS,iic_buff,2);    
+
+    iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->g);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->g);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_B_ADDRESS,iic_buff,2); 	
+	
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->r);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->r);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_R_ADDRESS,iic_buff,2);   
+#endif
+#if PROJECT_TYPE==308
+#if USE_NEW_DIM == 1
+//???????????
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->cw);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->cw);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW1_ADDRESS,iic_buff,2);   
+	hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_B_ADDRESS,iic_buff,2); 
+
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW2_ADDRESS,iic_buff,2);
+	
+    iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->ww);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->ww);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW2_ADDRESS,iic_buff,2);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_R_ADDRESS,iic_buff,2); 
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_G_ADDRESS,iic_buff,2);	
+	
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->g);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->g);
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW1_ADDRESS,iic_buff,2);
+#endif
+#if USE_NEW_DIM == 0
+//???????????
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->g);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->g);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_R_ADDRESS,iic_buff,2); 
+	
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->cw);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->cw);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW1_ADDRESS,iic_buff,2);   
+	hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_B_ADDRESS,iic_buff,2); 
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW2_ADDRESS,iic_buff,2);
+	
+    iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->ww);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->ww);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW2_ADDRESS,iic_buff,2);
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_G_ADDRESS,iic_buff,2);  
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW1_ADDRESS,iic_buff,2);
+#endif
+#endif
+
+}
+
+
+static uint8_t light_linear_deal(rs485_dac_dim_t dac_start,  rs485_dac_dim_t dac_end,
+                                 rs485_dac_dim_t *dac_current, uint32_t *run_time, float whole_time)
+{
+    float ratio_r;
+    float ratio_g;
+    float ratio_b;
+    float ratio_ww;
+    float ratio_cw;
+
+    ratio_r = (dac_end.r - dac_start.r) / whole_time;
+    ratio_g = (dac_end.g - dac_start.g) / whole_time;
+    ratio_b = (dac_end.b - dac_start.b) / whole_time;
+    ratio_ww = (dac_end.ww - dac_start.ww) / whole_time;
+    ratio_cw = (dac_end.cw - dac_start.cw) / whole_time;
+
+
+    if (*run_time >= whole_time)
+    {
+        *run_time = whole_time;
+    }
+    else
+        (*run_time)+=2;
+
+    dac_current->r = dac_start.r + (ratio_r * (*run_time) + 0.5f);
+    dac_current->g = dac_start.g + (ratio_g * (*run_time) + 0.5f);
+    dac_current->b = dac_start.b + (ratio_b * (*run_time) + 0.5f);
+    dac_current->ww = dac_start.ww + (ratio_ww * (*run_time) + 0.5f);
+    dac_current->cw = dac_start.cw + (ratio_cw * (*run_time) + 0.5f);
+
+    if (*run_time == whole_time)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+void rs485_dac_fade_handle(void)
+{
+	 if(dac_fade.fade_start == 1 && dac_fade.run_time < (RS485_ANALOG_FADE_TIME/2) && dev_lamp.Connected == 1)
+    {
+        if(dac_fade.run_time == 0)
+        {
+			if(dac_fade.analog_dac_current.r == 0 && dac_fade.analog_dac_end.r!=0) dac_fade.analog_dac_current.r = dac_fade.analog_dac_init.r;
+			if(dac_fade.analog_dac_current.g == 0 && dac_fade.analog_dac_end.g!=0) dac_fade.analog_dac_current.g = dac_fade.analog_dac_init.g;
+			if(dac_fade.analog_dac_current.b == 0 && dac_fade.analog_dac_end.b!=0) dac_fade.analog_dac_current.b = dac_fade.analog_dac_init.b;
+			if(dac_fade.analog_dac_current.ww == 0 && dac_fade.analog_dac_end.ww!=0) dac_fade.analog_dac_current.ww = dac_fade.analog_dac_init.ww;
+			if(dac_fade.analog_dac_current.cw == 0 && dac_fade.analog_dac_end.cw!=0) dac_fade.analog_dac_current.cw = dac_fade.analog_dac_init.cw;
+            memcpy(&dac_fade.analog_dac_start, &dac_fade.analog_dac_current, sizeof(dac_fade.analog_dac_current));
+        }
+        light_linear_deal(dac_fade.analog_dac_start, dac_fade.analog_dac_end, &dac_fade.analog_dac_current, &dac_fade.run_time, (RS485_ANALOG_FADE_TIME/2));
+		#if PROJECT_TYPE == 307
+		if((dac_fade.analog_dac_current.g != 0) &&  ( dac_fade.analog_dac_current.g >= dac_fade.analog_dac_init.g))    
+		{
+			
+			dev_analog_green_ctrl(true);
+		}
+		else
+		{
+
+			dev_analog_green_ctrl(false);
+		} 
+		#endif
+        analog_dim_output(&dac_fade.analog_dac_current);
+    }
+}
+
+bool rs485_self_adjust_read(dev_lamp_t* dev_lamp)
+{
+    memset(read_buff, 0, sizeof(read_buff));
+    rs485_cmd_body_t* p_read_body = (rs485_cmd_body_t*)read_buff;
+    uint16_t *p_pwm_value = (uint16_t* )&adapt_fade.adapt_pwm_end;
+    uint16_t body_size = 0;
+    rs485_cmd_body_t cmd_body_1 = {.header.cmd_type = RS485_Cmd_Self_Adjust, .cmd_arg.self_adjust_t.led_color_type   = HAL_PWM_SELF_ADAPTION_R,};
+    rs485_cmd_body_t cmd_body_2 = {.header.cmd_type = RS485_Cmd_Self_Adjust,.cmd_arg.self_adjust_t.led_color_type = HAL_PWM_SELF_ADAPTION_G  ,};
+    rs485_cmd_body_t cmd_body_3 = {.header.cmd_type = RS485_Cmd_Self_Adjust, .cmd_arg.self_adjust_t.led_color_type = HAL_PWM_SELF_ADAPTION_B,};
+    rs485_cmd_body_t cmd_body_4 = {.header.cmd_type = RS485_Cmd_Self_Adjust,.cmd_arg.self_adjust_t.led_color_type = HAL_PWM_SELF_ADAPTION_WW1 ,};
+    rs485_cmd_body_t cmd_body_5 = {.header.cmd_type = RS485_Cmd_Self_Adjust, .cmd_arg.self_adjust_t.led_color_type = HAL_PWM_SELF_ADAPTION_CW1,};
+    rs485_cmd_body_t cmd_body_6 = {.header.cmd_type = RS485_Cmd_Self_Adjust,.cmd_arg.self_adjust_t.led_color_type = HAL_PWM_SELF_ADAPTION_WW2 ,};
+    rs485_cmd_body_t cmd_body_7 = {.header.cmd_type = RS485_Cmd_Self_Adjust,.cmd_arg.self_adjust_t.led_color_type = HAL_PWM_SELF_ADAPTION_CW2,};
+    
+	if(0 == dev_rs485_cmd_read(&dev_lamp->rs485, 5, 100, true, read_buff, &cmd_body_1, &cmd_body_2, \
+            &cmd_body_3, &cmd_body_4,&cmd_body_5, &cmd_body_6,&cmd_body_7, DEV_RS485_VA_ARG_END))
+    {
+		for(uint8_t i = HAL_PWM_SELF_ADAPTION_R ; i< (HAL_PWM_SELF_ADAPTION_CW2 + 1) ; i++)
+        {
+            switch (p_read_body->cmd_arg.self_adjust_t.adjust_dir)
+            {
+                case  0:
+                   *p_pwm_value =  p_read_body->cmd_arg.self_adjust_t.adjust_val ;
+                break;
+            }
+           // hal_timer_duty_cycle_set( (enum hal_timera_enum)i ,*p_pwm_value) ;
+            body_size += sizeof(rs485_cmd_header_t) + p_read_body->header.arg_size;
+            p_read_body = (rs485_cmd_body_t*)((uint32_t)read_buff + body_size);
+            p_pwm_value++;
+  
+        }
+
+		return 1;
+	}
+	else
+	{
+		return 0;
+	
+	}
+}
+
+
+
+
+bool rs485_self_adaption_mode(dev_lamp_t* dev_lamp)
+{
+    memset(read_buff, 0, sizeof(read_buff));
+    rs485_cmd_body_t* p_read_body = (rs485_cmd_body_t*)read_buff;
+    uint16_t *p_pwm_value = (uint16_t* )&adapt_fade.adapt_pwm_end;
+    uint16_t *p_pwm_init = (uint16_t* )&adapt_fade.adapt_pwm_init;
+	uint16_t *p_pwm_limit = (uint16_t* )&adapt_fade.adapt_pwm_limit;
+    uint16_t body_size = 0;
+    rs485_cmd_body_t cmd_body_1 = {.header.cmd_type = RS485_Cmd_Self_Adaption, .cmd_arg.self_adaption.led_color_type = HAL_PWM_SELF_ADAPTION_R,};
+    rs485_cmd_body_t cmd_body_2 = {.header.cmd_type = RS485_Cmd_Self_Adaption,.cmd_arg.self_adaption.led_color_type = HAL_PWM_SELF_ADAPTION_G  ,};
+    rs485_cmd_body_t cmd_body_3 = {.header.cmd_type = RS485_Cmd_Self_Adaption, .cmd_arg.self_adaption.led_color_type = HAL_PWM_SELF_ADAPTION_B,};
+    rs485_cmd_body_t cmd_body_4 = {.header.cmd_type = RS485_Cmd_Self_Adaption,.cmd_arg.self_adaption.led_color_type = HAL_PWM_SELF_ADAPTION_WW1 ,};
+    rs485_cmd_body_t cmd_body_5 = {.header.cmd_type = RS485_Cmd_Self_Adaption, .cmd_arg.self_adaption.led_color_type = HAL_PWM_SELF_ADAPTION_CW1,};
+    rs485_cmd_body_t cmd_body_6 = {.header.cmd_type = RS485_Cmd_Self_Adaption,.cmd_arg.self_adaption.led_color_type = HAL_PWM_SELF_ADAPTION_WW2 ,};
+    rs485_cmd_body_t cmd_body_7 = {.header.cmd_type = RS485_Cmd_Self_Adaption,.cmd_arg.self_adaption.led_color_type = HAL_PWM_SELF_ADAPTION_CW2,};
+    
+	if(0 == dev_rs485_cmd_read(&dev_lamp->rs485, 5, 100, true, read_buff, &cmd_body_1, &cmd_body_2, \
+            &cmd_body_3, &cmd_body_4,&cmd_body_5, &cmd_body_6,&cmd_body_7, DEV_RS485_VA_ARG_END))
+    {
+		for(uint8_t i = HAL_PWM_SELF_ADAPTION_R ; i< (HAL_PWM_SELF_ADAPTION_CW2 + 1) ; i++)
+        {
+            switch (p_read_body->cmd_arg.self_adaption.adjust_dir)
+            {
+                case 0:
+                    break;
+                case 1:
+                     *p_pwm_value = *p_pwm_value + p_read_body->cmd_arg.self_adaption.adjust_val * 10;
+                    if( *p_pwm_value > 5950)
+                    {
+                        *p_pwm_value = 5950;
+                    }
+                    else if	( *p_pwm_value < *p_pwm_limit)
+                    {
+                        *p_pwm_value = *p_pwm_limit;
+                    }	
+                    break;
+                case 2:
+                    *p_pwm_value = *p_pwm_value -  p_read_body->cmd_arg.self_adaption.adjust_val * 10;
+                    if(  *p_pwm_value > 5950)
+                    {
+                        *p_pwm_value = 5950;
+                    }
+                    else if	( *p_pwm_value < *p_pwm_limit)
+                    {
+                        *p_pwm_value = *p_pwm_limit;
+                    }		
+                    break;
+                case 3:	
+                    *p_pwm_value = *p_pwm_init;
+                    break;
+                default:break;
+            }
+            
+           // hal_timer_duty_cycle_set( (enum hal_timera_enum)i ,*p_pwm_value) ;
+            body_size += sizeof(rs485_cmd_header_t) + p_read_body->header.arg_size;
+            p_read_body = (rs485_cmd_body_t*)((uint32_t)read_buff + body_size);
+            p_pwm_value++;
+            p_pwm_init++;
+			p_pwm_limit++;
+        }
+        adapt_fade_restart();
+		return 1;
+	}
+	else
+	{
+		return 0;
+	
+	}
+
+}
+
+uint8_t adapt_linear_deal(rs485_pwm_dim_t adapt_start,  rs485_pwm_dim_t adapt_end,
+                                 rs485_pwm_dim_t *adapt_current, uint32_t *run_time, float whole_time)
+{
+    float ratio_r;
+    float ratio_g;
+    float ratio_b;
+    float ratio_ww1;
+    float ratio_cw1;
+    float ratio_ww2;
+    float ratio_cw2;
+
+    ratio_r = (adapt_end.r - adapt_start.r) / whole_time;
+    ratio_g = (adapt_end.g - adapt_start.g) / whole_time;
+    ratio_b = (adapt_end.b - adapt_start.b) / whole_time;
+    ratio_ww1 = (adapt_end.ww1 - adapt_start.ww1) / whole_time;
+    ratio_cw1 = (adapt_end.cw1 - adapt_start.cw1) / whole_time;
+    ratio_ww2 = (adapt_end.ww2 - adapt_start.ww2) / whole_time;
+    ratio_cw2 = (adapt_end.cw2 - adapt_start.cw2) / whole_time;
+
+
+    if (*run_time >= whole_time)
+    {
+        *run_time = whole_time;
+    }
+    else
+        (*run_time)++;
+
+    adapt_current->r = adapt_start.r + (ratio_r * (*run_time) + 0.5f);
+    adapt_current->g = adapt_start.g + (ratio_g * (*run_time) + 0.5f);
+    adapt_current->b = adapt_start.b + (ratio_b * (*run_time) + 0.5f);
+    adapt_current->ww1 = adapt_start.ww1 + (ratio_ww1 * (*run_time) + 0.5f);
+    adapt_current->cw1 = adapt_start.cw1 + (ratio_cw1 * (*run_time) + 0.5f);
+    adapt_current->ww2 = adapt_start.ww2 + (ratio_ww2 * (*run_time) + 0.5f);
+    adapt_current->cw2 = adapt_start.cw2 + (ratio_cw2 * (*run_time) + 0.5f);
+
+    if (*run_time == whole_time)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+
+void analog_dim_output_test( rs485_dac_dim_t * dac_body )
+{
+ 
+    uint8_t iic_buff[2] = {0}; 
+#if PROJECT_TYPE==307
+
+    iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->cw);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->cw);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW1_ADDRESS,iic_buff,2);   
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW2_ADDRESS,iic_buff,2);
+	delay_ms(10);
+    iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->ww);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->ww);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW1_ADDRESS,iic_buff,2);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW2_ADDRESS,iic_buff,2);    
+	delay_ms(10);
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->b); 
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->b);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_G_ADDRESS,iic_buff,2);    
+	delay_ms(10);
+    iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->g);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->g);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_B_ADDRESS,iic_buff,2); 	
+	delay_ms(10);
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->r);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->r);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_R_ADDRESS,iic_buff,2); 
+	delay_ms(10);
+#endif
+#if PROJECT_TYPE==308
+#if USE_NEW_DIM == 1
+//???????????
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->g);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->g);
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW1_ADDRESS,iic_buff,2);
+	
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->cw);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->cw);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW1_ADDRESS,iic_buff,2);   
+	hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_B_ADDRESS,iic_buff,2); 
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW2_ADDRESS,iic_buff,2);
+	
+    iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->ww);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->ww);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW2_ADDRESS,iic_buff,2);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_R_ADDRESS,iic_buff,2); 
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_G_ADDRESS,iic_buff,2);	
+#endif
+#if USE_NEW_DIM == 0
+//???????????
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->g);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->g);
+    hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_R_ADDRESS,iic_buff,2); 
+	
+	iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->cw);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->cw);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW1_ADDRESS,iic_buff,2);   
+	hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_B_ADDRESS,iic_buff,2); 
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW2_ADDRESS,iic_buff,2);
+	
+    iic_buff[0] = GET_16BIT_HIGH8BIT(dac_body->ww);
+    iic_buff[1] = GET_16BIT_LOW8BIT(dac_body->ww);
+    hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,(uint8_t)IIC_WW2_ADDRESS,iic_buff,2);
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_G_ADDRESS,iic_buff,2);  
+	hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,(uint8_t)IIC_CW1_ADDRESS,iic_buff,2);
+#endif
+#endif
+
+}
+
+void light_dim_test_funtion(void)
+{
+	static uint8_t test_admi_flag = 0;
+	uint8_t analog_value111[2] = {0x03,0XE8};
+	uint8_t analog_value122[2] = {0x00,0X00};
+	if(test_admi_flag == 0)
+	{
+		
+	}
+	else if(test_admi_flag == 1)
+	{
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW1_ADDRESS,(uint8_t* )analog_value111,2);   
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_B_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW1_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_R_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_G_ADDRESS,(uint8_t* )analog_value122,2); 
+	}
+	else if(test_admi_flag == 2)
+	{
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW1_ADDRESS,(uint8_t* )analog_value122,2);   
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW2_ADDRESS,(uint8_t* )analog_value111,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_B_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW1_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_R_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_G_ADDRESS,(uint8_t* )analog_value122,2); 
+	}
+	else if(test_admi_flag == 3)
+	{
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW1_ADDRESS,(uint8_t* )analog_value122,2);   
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_B_ADDRESS,(uint8_t* )analog_value111,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW1_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_R_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_G_ADDRESS,(uint8_t* )analog_value122,2); 
+	}
+	else if(test_admi_flag == 4)
+	{
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW1_ADDRESS,(uint8_t* )analog_value122,2);   
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_B_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW1_ADDRESS,(uint8_t* )analog_value111,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_R_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_G_ADDRESS,(uint8_t* )analog_value122,2); 
+	}
+	else if(test_admi_flag == 5)
+	{
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW1_ADDRESS,(uint8_t* )analog_value122,2);   
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_B_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW1_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW2_ADDRESS,(uint8_t* )analog_value111,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_R_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_G_ADDRESS,(uint8_t* )analog_value122,2); 
+	}
+	else if(test_admi_flag == 6)
+	{
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW1_ADDRESS,(uint8_t* )analog_value122,2);   
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_B_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW1_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_R_ADDRESS,(uint8_t* )analog_value111,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_G_ADDRESS,(uint8_t* )analog_value122,2); 
+	}
+	else if(test_admi_flag == 7)
+	{
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW1_ADDRESS,(uint8_t* )analog_value122,2);   
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_WW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_WW1_WW2_B,IIC_B_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW1_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_CW2_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_R_ADDRESS,(uint8_t* )analog_value122,2); 
+		hal_iic_send_data(HAL_IIC_ANALOG_CW1_CW2_R_G,IIC_G_ADDRESS,(uint8_t* )analog_value111,2); 
+	}
+//	if(dev_lamp.Connected == 1 )
+//	{
+//		if(scount_test++ > flag_ms)
+//		{
+//			scount_test = 0;
+//			if(flag_test) //testing
+//			{
+//				flag_test = 0;
+//				light_boby.cct_arg.cct.cct  = 4700;
+//				light_boby.cct_arg.cct.duv  = 0;
+//				light_boby.cct_arg.lightness  = 1000;
+//			}
+//			else
+//			{
+//				flag_test = 1;
+//				light_boby.cct_arg.cct.cct  = 1000;
+//				light_boby.cct_arg.cct.duv  = 0;
+//				light_boby.cct_arg.lightness  = 0;
+//			}
+//		}
+//		package_485_light_data(&cmd_body_1, date_center_get_light_mode(), &light_boby); 
+//		dev_lamp.Connected = rs485_light_control(&dev_lamp, true, 5, 100, &cmd_body_1); 
+//	}
+}
+

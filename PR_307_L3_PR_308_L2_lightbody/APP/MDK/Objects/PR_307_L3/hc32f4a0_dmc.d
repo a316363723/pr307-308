@@ -1,0 +1,16 @@
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\driver\src\hc32f4a0_dmc.c
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\driver\inc\hc32f4a0_dmc.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\common\hc32_common.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stddef.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\common\hc32f4a0.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\bsp\Include\core_cm4.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\bsp\Include\cmsis_version.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\bsp\Include\cmsis_compiler.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\bsp\Include\cmsis_armcc.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\bsp\Include\mpu_armv7.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\common\system_hc32f4a0.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\source\ddl_config.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: ..\driver\inc\hc32f4a0_utility.h
+.\objects\pr_307_l3\hc32f4a0_dmc.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h

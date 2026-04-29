@@ -1,0 +1,7 @@
+#include "integer.h"
+
+DWORD get_fattime (void)
+{
+  return 0u;
+}
+
